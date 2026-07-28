@@ -59,9 +59,9 @@
     "id": 8,
     "category": "🔴 Edge Case (Bẫy Tool lỗi & MAX_ITERATIONS)",
     "question": "Đặt lịch khám khoa Thú y vào ngày 32/13/2026 cho tôi với bác sĩ Nguyễn Văn Không Tồn Tại.",
-    "expected_tools": ["check_doctor_schedule"],
-    "expected_behavior": "Cả 3 tham số đều sai: khoa không có trong hệ thống, ngày không hợp lệ, bác sĩ không tồn tại. Tool phải trả về chuỗi thông báo LỖI thay vì crash. Agent không được lặp vô tận thử lại -> Guardrail MAX_ITERATIONS ngắt vòng lặp và trả về thông báo lịch sự kèm danh sách khoa khả dụng.",
-    "guardrail_check": "🛡️ GUARDRAIL SỐ 3: Tool fail an toàn (trả string lỗi) + MAX_ITERATIONS chặn loop vô tận."
+    "expected_tools": [],
+    "expected_behavior": "Cả 3 tham số đều sai: khoa Thú y không có trong hệ thống, ngày 32/13/2026 không hợp lệ, bác sĩ không tồn tại. Đã đo thực tế với gpt-4o-mini: Agent KHÔNG gọi tool nào — tự nhận ra ngày vô nghĩa ngay bước 1 và từ chối lịch sự. Đây là hành vi ĐÚNG và tiết kiệm, nên expected_tools để rỗng (ban đầu ghi ['check_doctor_schedule'] là kỳ vọng sai của Role 1). Giá trị thật của case này: bước 1 Agent trả lời sai định dạng ReAct, App phát hiện và nhắc lại cú pháp, bước 2 Agent trả về đúng -> chứng minh cơ chế tự phục hồi lỗi định dạng (malformed recovery) trong app.py hoạt động.",
+    "guardrail_check": "Agent phải từ chối yêu cầu bất khả thi mà không bịa mã lịch hẹn. LƯU Ý: nhánh trả lỗi của tool KHÔNG được chạm tới qua case này (vì Agent chặn từ trước), nên yêu cầu 'tool fail an toàn' phải nghiệm thu bằng cách gọi tool trực tiếp — đã kiểm tra đủ 6 nhánh lỗi (khoa lạ, ngày sai, triệu chứng lạ, chủ đề ngoài phạm vi, đặt trùng lịch) đều trả string LỖI, không raise exception. Guardrail MAX_ITERATIONS xem case #11."
   },
   {
     "id": 9,

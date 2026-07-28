@@ -158,7 +158,15 @@ def get_clinic_info(topic: str) -> str:
     elif any(k in t for k in ["giờ", "thời gian"]):
         return "Giờ làm việc: 07:00 - 18:00 tất cả các ngày trong tuần (từ Thứ 2 đến Chủ Nhật)."
     else:
-        return "Thông tin phòng khám: Mở cửa 07:00-18:00 hàng ngày, Phí khám 300.000 VNĐ, có áp dụng BHYT. Địa chỉ: 123 Giải Phóng, Hà Nội."
+        # 🛡️ CHỐNG LẠM DỤNG TOOL: nhánh này TRƯỚC ĐÂY là catch-all trả thông tin chung cho
+        # mọi chủ đề, khiến Agent gọi tool cả với câu hỏi kiến thức y khoa phổ thông
+        # (VD: "khám Tim mạch gồm những gì?") rồi nhét giá tiền/địa chỉ vô nghĩa vào câu trả lời.
+        # Nay trả LỖI rõ ràng để Agent biết đây không phải việc của tool này.
+        return (
+            f"LỖI: Tool này chỉ tra cứu thông tin hành chính của phòng khám, không có dữ liệu về chủ đề '{topic}'. "
+            f"Các chủ đề hợp lệ: 'giá khám' / 'bảo hiểm - BHYT' / 'địa chỉ' / 'giờ làm việc'. "
+            f"Nếu người dùng hỏi kiến thức y khoa phổ thông, hãy tự trả lời bằng kiến thức có sẵn, không cần gọi tool."
+        )
 
 
 # Danh sách các tool được đăng ký để Agent sử dụng

@@ -88,12 +88,17 @@ def parse_agent_response(response_text: str) -> dict:
             final_text = stripped[len("Final Answer:"):].strip()
             extra_lines = []
             for l in lines[i + 1:]:
-                l_stripped = l.strip()
-                if not l_stripped or l_stripped.startswith(("Thought:", "Action:", "Observation:")):
+                # Chỉ dừng khi gặp mốc ReAct kế tiếp. TRƯỚC ĐÂY còn dừng ở cả dòng trống,
+                # khiến Final Answer nhiều đoạn bị cắt cụt: khi LLM trả lời dạng
+                # "Khám Tim mạch gồm:" + (dòng trống) + danh sách gạch đầu dòng thì
+                # toàn bộ danh sách bị mất, chỉ còn lại câu mở đầu.
+                if l.strip().startswith(("Thought:", "Action:", "Observation:")):
                     break
-                extra_lines.append(l_stripped)
+                extra_lines.append(l.rstrip())
+            while extra_lines and not extra_lines[-1].strip():
+                extra_lines.pop()
             if extra_lines:
-                final_text = final_text + "\n" + "\n".join(extra_lines)
+                final_text = (final_text + "\n" + "\n".join(extra_lines)).strip()
             return {"type": "final", "thought": thought, "final_answer": final_text}
 
         if stripped.startswith("Action:"):
