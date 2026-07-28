@@ -26,15 +26,15 @@ from providers import get_llm_provider
 
 load_dotenv()
 
-def load_test_cases():
-    """Đọc bộ test cases từ config/test_cases.json của Role 1"""
+def load_test_cases(filename: str = "test_cases.json"):
+    """Đọc bộ test cases từ config/<filename> (mặc định test_cases.json của Role 1)."""
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(base_dir, "config", "test_cases.json")
-    
+    config_path = os.path.join(base_dir, "config", filename)
+
     # Fallback kiểm tra nếu file ở thư mục hiện tại
     if not os.path.exists(config_path):
-        config_path = "test_cases.json"
-        
+        config_path = filename
+
     with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -52,8 +52,11 @@ def run_baseline_chatbot(user_query: str, provider):
     return response
 
 
-# Regex tách dòng Action: ten_tool[tham_so_1, 'tham số 2'] (chấp nhận cả ngoặc tròn nếu LLM lỡ dùng)
-_ACTION_LINE_RE = re.compile(r"^(\w+)[\[\(](.*)[\]\)]$")
+# Regex tách dòng Action: ten_tool[tham_so_1, 'tham số 2'] (chấp nhận cả ngoặc tròn nếu LLM lỡ dùng).
+# Không neo "$" ở cuối để chịu được trường hợp LLM lỡ chèn thêm chú thích sau dấu đóng ngoặc
+# (VD: "book_appointment[...]  # hoặc chọn slot khác") — nhờ ".*" tham lam nên vẫn khớp đúng
+# dấu đóng ngoặc CUỐI CÙNG của lời gọi tool, phần chú thích phía sau bị bỏ qua thay vì bị coi là lỗi.
+_ACTION_LINE_RE = re.compile(r"^(\w+)[\[\(](.*)[\]\)]")
 # Regex tách tham số, tôn trọng dấu nháy để không vỡ khi tham số có dấu phẩy bên trong
 _ARGS_RE = re.compile(r"""\s*'([^']*)'|\s*"([^"]*)"|\s*([^,]+)""")
 
@@ -205,23 +208,30 @@ if __name__ == "__main__":
     model_name = getattr(provider, "model_name", "Offline Mock Mode")
     print(f"🔌 LLM Provider đang hoạt động: {provider.__class__.__name__} (Model: {model_name})")
     
-    tests = load_test_cases()
-    print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json\n")
-
     # Cách chạy:
-    #   python src/app.py         -> chạy Test Case #3 (mặc định, demo nhanh)
-    #   python src/app.py 5       -> chạy đúng Test Case có "id" = 5
-    #   python src/app.py all     -> chạy toàn bộ test suite (dùng để gom log cho docs/trace_eval.md)
+    #   python src/app.py                  -> chạy Test Case #3 trong test_cases.json (mặc định, demo nhanh)
+    #   python src/app.py 5                -> chạy đúng Test Case có "id" = 5 trong test_cases.json
+    #   python src/app.py all              -> chạy toàn bộ test_cases.json (dùng để gom log cho docs/trace_eval.md)
+    #   python src/app.py all extra        -> chạy toàn bộ config/test_cases_extra.json (bộ 12 test bổ sung)
+    #   python src/app.py 15 extra         -> chạy đúng Test Case "id" = 15 trong test_cases_extra.json
+    dataset_arg = sys.argv[2] if len(sys.argv) > 2 else None
+    dataset_file = "test_cases_extra.json" if dataset_arg == "extra" else "test_cases.json"
+
+    tests = load_test_cases(dataset_file)
+    print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/{dataset_file}\n")
+
     arg = sys.argv[1] if len(sys.argv) > 1 else None
+
+    default_id = 3 if dataset_file == "test_cases.json" else tests[0]["id"]
 
     if arg == "all":
         selected_tests = tests
     else:
         try:
-            test_id = int(arg) if arg else 3
+            test_id = int(arg) if arg else default_id
         except ValueError:
-            test_id = 3
-        selected_tests = [t for t in tests if t["id"] == test_id] or [tests[2]]
+            test_id = default_id
+        selected_tests = [t for t in tests if t["id"] == test_id] or [tests[0]]
 
     for test in selected_tests:
         print("\n" + "=" * 60)
