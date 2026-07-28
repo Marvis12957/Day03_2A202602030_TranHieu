@@ -22,7 +22,17 @@
 
 **🏥 Chủ đề nhóm đã chốt: TRỢ LÝ ĐẶT LỊCH KHÁM BỆNH & TƯ VẤN CHUYÊN KHOA** (đề tài #6)
 
-Bộ 9 test cases đã push lên Git tại `config/test_cases.json`. Mỗi test case có sẵn 2 field phụ giúp các Role khác làm việc: `expected_tools` (Role 2/4 biết cần tool nào) và `guardrail_check` (Role 3 biết cần chặn gì).
+Bộ **10 test cases** đã push lên Git tại `config/test_cases.json`. Mỗi test case có sẵn 2 field phụ giúp các Role khác làm việc: `expected_tools` (Role 2/4 biết cần tool nào) và `guardrail_check` (Role 3 biết cần chặn gì).
+
+**Độ phủ tool** — cả 4 tool đều đã có test case gọi tới:
+
+| Tool | Được gọi ở case |
+| :--- | :--- |
+| `suggest_specialty` | #3, #5, #6 |
+| `check_doctor_schedule` | #4, #5, #8 |
+| `book_appointment` | #5 |
+| `get_clinic_info` | #10 |
+| *(không gọi tool)* | #1, #2, #7, #9 |
 
 ### 🛠️ Role 2 — Trần Trung Hiếu (`src/tools.py`)
 
