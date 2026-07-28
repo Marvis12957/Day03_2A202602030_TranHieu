@@ -58,15 +58,28 @@ def run_baseline_chatbot(user_query: str, provider):
 # (VD: "book_appointment[...]  # hoặc chọn slot khác") — nhờ ".*" tham lam nên vẫn khớp đúng
 # dấu đóng ngoặc CUỐI CÙNG của lời gọi tool, phần chú thích phía sau bị bỏ qua thay vì bị coi là lỗi.
 _ACTION_LINE_RE = re.compile(r"^(\w+)[\[\(](.*)[\]\)]")
-# Regex tách tham số, tôn trọng dấu nháy để không vỡ khi tham số có dấu phẩy bên trong
-_ARGS_RE = re.compile(r"""\s*'([^']*)'|\s*"([^"]*)"|\s*([^,]+)""")
+# Regex tách tham số, tôn trọng dấu nháy để không vỡ khi tham số có dấu phẩy bên trong.
+# Phải nhận CẢ nháy cong Unicode ‘ ’ “ ” vì LLM rất hay dùng chúng thay nháy ASCII:
+# trước đây gặp Action: book_appointment['Bệnh nhân', ...] viết bằng nháy cong thì
+# regex không khớp nhánh có nháy, rơi xuống nhánh [^,]+ và dấu nháy LỌT VÀO dữ liệu
+# — lịch hẹn bị lưu tên bệnh nhân thành "‘Bệnh nhân’" kèm cả dấu.
+_ARGS_RE = re.compile(
+    r"\s*'([^']*)'"        # 'nháy đơn ASCII'
+    r"|\s*\"([^\"]*)\""    # "nháy kép ASCII"
+    r"|\s*‘([^’]*)’"   # ‘nháy đơn cong’
+    r"|\s*“([^”]*)”"   # “nháy kép cong”
+    r"|\s*([^,]+)"         # không nháy
+)
+
+# Mọi loại dấu nháy cần bóc khỏi hai đầu tham số
+_QUOTE_CHARS = "'\"‘’“”"
 
 
 def parse_args(args_str: str) -> list:
     """Tách chuỗi tham số thô trong Action[...] thành list, giữ nguyên dấu phẩy trong chuỗi có nháy."""
     args = []
-    for a, b, c in _ARGS_RE.findall(args_str):
-        value = (a or b or c).strip()
+    for groups in _ARGS_RE.findall(args_str):
+        value = next((g for g in groups if g), "").strip().strip(_QUOTE_CHARS).strip()
         if value:
             args.append(value)
     return args
@@ -131,7 +144,25 @@ def execute_tool(tool_name: str, args: list) -> str:
         return f"LỖI: Tool '{tool_name}' gặp sự cố khi thực thi: {e}"
 
 
-def run_react_agent(user_query: str, provider, on_event=None):
+def build_history_context(history) -> str:
+    """
+    Kết xuất lịch sử hội thoại thành đoạn văn bản bơm vào đầu scratchpad.
+
+    Cần thiết vì Guardrail số 4 buộc Agent HỎI LẠI tên bệnh nhân trước khi đặt lịch —
+    nếu mỗi lượt đều bắt đầu từ con số 0 thì Agent sẽ hỏi lại mãi mà không bao giờ
+    nhận được câu trả lời, hội thoại rơi vào vòng lặp vô nghĩa.
+    """
+    if not history:
+        return ""
+    lines = ["[LỊCH SỬ HỘI THOẠI TRƯỚC ĐÓ — thông tin bệnh nhân đã cung cấp ở đây thì "
+             "DÙNG LẠI, tuyệt đối không hỏi lại lần nữa]"]
+    for turn in history:
+        who = "Bệnh nhân" if turn.get("role") == "user" else "Trợ lý"
+        lines.append(f"{who}: {turn.get('content', '')}")
+    return "\n".join(lines) + "\n\n"
+
+
+def run_react_agent(user_query: str, provider, on_event=None, history=None):
     """
     Dựng vòng lặp ReAct Agent thật: gọi LLM sinh Thought -> Action, App tự thực thi
     Tool lấy Observation thật rồi đưa lại vào ngữ cảnh cho vòng suy luận kế tiếp.
@@ -143,6 +174,9 @@ def run_react_agent(user_query: str, provider, on_event=None):
             "malformed"|"guardrail", ...}. Để None thì hàm chạy y hệt như cũ (chỉ in ra
             terminal) — giao diện Streamlit truyền callback vào để vẽ trace trực tiếp
             mà không phải viết lại logic vòng lặp ở nơi khác.
+        history (list | None): Lịch sử hội thoại các lượt trước, dạng
+            [{"role": "user"|"assistant", "content": "..."}]. Để None thì Agent chạy
+            đơn lượt y như cũ (tương thích ngược hoàn toàn).
     """
     def emit(**payload):
         if on_event:
@@ -150,7 +184,7 @@ def run_react_agent(user_query: str, provider, on_event=None):
 
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
 
-    scratchpad = f"Câu hỏi của bệnh nhân: {user_query}\n"
+    scratchpad = build_history_context(history) + f"Câu hỏi của bệnh nhân: {user_query}\n"
     last_action_signature = None
     step = 0
 
@@ -314,6 +348,35 @@ def plan_goal(user_query: str, provider) -> list:
     return subtasks[:MAX_SUBTASKS]   # 🛡️ Guardrail: chặn Planner đẻ ra quá nhiều việc con
 
 
+def run_chat_loop(provider):
+    """
+    Chế độ hội thoại NHIỀU LƯỢT trong terminal — dùng để demo cảnh Agent hỏi lại
+    thông tin còn thiếu rồi hoàn tất đặt lịch ở lượt sau.
+
+    Chạy: python src/app.py chat   (gõ 'thoat' để kết thúc)
+    """
+    print("\n💬 CHẾ ĐỘ HỘI THOẠI NHIỀU LƯỢT (gõ 'thoat' để kết thúc)")
+    print("   Thử: 'Tôi bị đau dạ dày, đặt giúp tôi lịch khám sớm nhất.'")
+    print("   Agent sẽ hỏi lại tên — trả lời ở lượt sau để thấy nó dùng lại ngữ cảnh.\n")
+
+    history = []
+    while True:
+        try:
+            user_input = input("👤 Bạn: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n👋 Kết thúc phiên hội thoại.")
+            break
+        if not user_input:
+            continue
+        if user_input.lower() in ("thoat", "thoát", "exit", "quit"):
+            print("👋 Kết thúc phiên hội thoại.")
+            break
+
+        answer = run_react_agent(user_input, provider, history=history)
+        history.append({"role": "user", "content": user_input})
+        history.append({"role": "assistant", "content": answer})
+
+
 def run_autonomous_agent(user_query: str, provider, on_event=None):
     """
     Vòng đời Cấp 4: Plan ➔ (lặp) giải từng việc con bằng ReAct Loop ➔ tổng hợp.
@@ -385,6 +448,11 @@ if __name__ == "__main__":
     #   python src/app.py all              -> chạy toàn bộ test_cases.json (dùng để gom log cho docs/trace_eval.md)
     #   python src/app.py all extra        -> chạy toàn bộ config/test_cases_extra.json (bộ 12 test bổ sung)
     #   python src/app.py 15 extra         -> chạy đúng Test Case "id" = 15 trong test_cases_extra.json
+    #   python src/app.py chat             -> chế độ hội thoại nhiều lượt (Agent hỏi lại thông tin thiếu)
+    if len(sys.argv) > 1 and sys.argv[1] == "chat":
+        run_chat_loop(provider)
+        sys.exit(0)
+
     dataset_arg = sys.argv[2] if len(sys.argv) > 2 else None
     dataset_file = "test_cases_extra.json" if dataset_arg == "extra" else "test_cases.json"
 
