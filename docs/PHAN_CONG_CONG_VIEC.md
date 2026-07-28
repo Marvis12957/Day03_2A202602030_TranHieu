@@ -8,13 +8,63 @@
 
 | Vai trò (Role)                               | File đảm nhận           | Nhiệm vụ chính                                                                                          | Người đảm nhận  |
 | :-------------------------------------------- | :------------------------- | :--------------------------------------------------------------------------------------------------------- | :------------------- |
-| **Role 1: Product Architect**           | `config/test_cases.json` | Định hướng bài toán & soạn bộ câu test case                                                       | `________________` |
-| **Role 2: Tool Engineer**               | `src/tools.py`           | Định nghĩa các công cụ (Tools) cho Agent                                                             | `________________` |
-| **Role 3: Prompt Engineer**             | `src/prompts.py`         | Viết ReAct System Prompt & phanh Guardrails                                                               | `________________` |
-| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `________________` |
-| **Role 5: Observability**               | `docs/trace_eval.md`     | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `________________` |
+| **Role 1: Product Architect**           | `config/test_cases.json` | Định hướng bài toán & soạn bộ câu test case                                                       | `Trương Công Thái Đức` |
+| **Role 2: Tool Engineer**               | `src/tools.py`           | Định nghĩa các công cụ (Tools) cho Agent                                                             | `Phạm Quốc Tuần` |
+| **Role 3: Prompt Engineer**             | `src/prompts.py`         | Viết ReAct System Prompt & phanh Guardrails                                                               | `Trần Trung Hiếu` |
+| **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `Trần Văn Hiếu` (chủ repo) |
+| **Role 5: Observability**               | `docs/trace_eval.md` + `docs/hybrid_flowchart.mermaid` | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `Trương Công Thái Đức` (kiêm) |
 
 *Note: Nếu nhóm 6 người, Role 5 tách thành 5A (Trace Analyst) và 5B (Flowchart Architect).*
+
+> ℹ️ **Nhóm 4 người / 5 role**: Role 1 hoàn thành sớm nhất (xong ngay Mốc 2) nên kiêm luôn Role 5 — hai vai này cùng tính chất "đánh giá & nghiệm thu", không tranh file với ai.
+
+## 📦 1B. BẢN BÀN GIAO TỪ ROLE 1 (Chủ đề đã chốt + Đặc tả cho từng Role)
+
+**🏥 Chủ đề nhóm đã chốt: TRỢ LÝ ĐẶT LỊCH KHÁM BỆNH & TƯ VẤN CHUYÊN KHOA** (đề tài #6)
+
+Bộ 9 test cases đã push lên Git tại `config/test_cases.json`. Mỗi test case có sẵn 2 field phụ giúp các Role khác làm việc: `expected_tools` (Role 2/4 biết cần tool nào) và `guardrail_check` (Role 3 biết cần chặn gì).
+
+### 🛠️ Role 2 — Phạm Quốc Tuần (`src/tools.py`)
+
+Xoá 2 tool mẫu `get_weather` / `search_flights`, viết 4 tool mới (tên phải khớp đúng field `expected_tools`):
+
+| Tool | Tham số | Trả về |
+| :--- | :--- | :--- |
+| `suggest_specialty` | `symptoms: str` | Chuyên khoa phù hợp + lý do (VD: đau thượng vị → Tiêu hóa) |
+| `check_doctor_schedule` | `specialty: str, date: str` | Danh sách bác sĩ & slot giờ còn trống |
+| `book_appointment` | `patient_name: str, specialty: str, slot: str` | Mã lịch hẹn xác nhận (VD: `LH2026-0042`) |
+| `get_clinic_info` | `topic: str` | Giá khám / địa chỉ / giờ làm việc / bảo hiểm |
+
+- ⚠️ **Docstring là thứ LLM đọc để chọn tool** → phải ghi rõ `Args:` và `Returns:` như 2 tool mẫu.
+- ⚠️ **Tool phải fail an toàn**: mọi lỗi đều `return "LỖI: ..."`, KHÔNG được `raise` (yêu cầu của test case #8 — khoa Thú y, ngày 32/13/2026, bác sĩ không tồn tại).
+- Nhớ cập nhật lại dict `AVAILABLE_TOOLS` ở cuối file.
+
+### 🧠 Role 3 — Trần Trung Hiếu (`src/prompts.py`)
+
+- `CHATBOT_BASELINE_PROMPT`: trợ lý y tế **không có tool** — phải thừa nhận không tra được lịch bác sĩ (để test case #4 lộ rõ hạn chế của Chatbot).
+- `REACT_SYSTEM_PROMPT`: liệt kê đúng 4 tool trên + ép format `Thought → Action → Observation → Final Answer`.
+- ⚠️ **`MAX_ITERATIONS` hiện đang là 3 — KHÔNG đủ**: test case #5 cần 3 lần gọi tool liên tiếp rồi mới tới bước Final Answer (= 4 vòng lặp), guardrail sẽ ngắt oan trước khi Agent trả lời xong. **Nâng lên 6.**
+- Cài đủ **4 guardrail** (đã đánh số sẵn trong `test_cases.json`):
+  1. Không chẩn đoán bệnh, không kê thuốc / liều dùng → *(case #6)*
+  2. Phát hiện dấu hiệu cấp cứu (đột quỵ, đau ngực dữ dội…) → khuyến cáo gọi **115** ngay, không đặt lịch thường → *(case #7)*
+  3. Tôn trọng `MAX_ITERATIONS`, không lặp vô tận khi tool báo lỗi → *(case #8)*
+  4. Chống prompt injection & không tiết lộ hồ sơ/PII bệnh nhân khác → *(case #9)*
+
+### 🚀 Role 4 — Trần Văn Hiếu (`src/app.py`)
+
+- ⚠️ **`app.py` sẽ crash ngay khi Role 2 push code**: dòng `from tools import ..., get_weather, search_flights` và phần thân `run_react_agent()` đang gọi cứng `get_weather("Hà Nội")`. Phải sửa cả 2 chỗ.
+- Thay vòng lặp giả (đang hardcode `if step == 1 / elif step == 2`) bằng **ReAct loop thật**: gọi LLM → regex bắt dòng `Action: tên_tool[tham_số]` → dispatch qua `AVAILABLE_TOOLS` → nối `Observation` vào scratchpad → lặp lại; `break` khi gặp `Final Answer`; in cảnh báo Guardrail khi chạm `MAX_ITERATIONS`.
+- Bọc `try/except` quanh chỗ gọi tool để tool lạ / sai tham số không làm sập app.
+- 🎁 Bonus +10%: thêm bước Planning (Agent tự chia nhỏ mục tiêu) hoặc Memory cho case #5.
+
+### 📊 Role 5 — Trương Công Thái Đức kiêm (`docs/trace_eval.md`)
+
+- Scoring Matrix: chấm theo chủ đề đặt lịch khám (case #5 là bằng chứng Multi-step & Dynamic Decision đều 5/5).
+- Trace log đầy đủ: lấy **case #5** (chuỗi 3 tool phụ thuộc nhau) — đây là log ăn điểm nhất.
+- So sánh Chatbot vs Agent: lấy **case #4** (Chatbot buộc phải nói "không truy cập được hệ thống lịch").
+- Vẽ `docs/hybrid_flowchart.mermaid`: câu hỏi kiến thức chung (case #1, #2) → Chatbot path; câu cần tra cứu/đặt lịch (case #3, #4, #5) → ReAct Agent path.
+
+---
 
 > 🌟 **VAI TRÒ NÒNG NỐT CỦA ROLE 4 (ĐẦU MỐI LẮP RÁP APP HOÀN CHỈNH)**:
 >
