@@ -12,7 +12,7 @@
 | **Role 2: Tool Engineer**               | `src/tools.py`           | Định nghĩa các công cụ (Tools) cho Agent                                                             | `Phạm Quốc Tuần` |
 | **Role 3: Prompt Engineer**             | `src/prompts.py`         | Viết ReAct System Prompt & phanh Guardrails                                                               | `Trần Trung Hiếu` |
 | **Role 4: Core Developer / Integrator** | `src/app.py`             | **Đầu mối kéo code/file của nhóm (`git pull`), Vibe Code lắp ráp thành App hoàn chỉnh** | `Trần Văn Hiếu` (chủ repo) |
-| **Role 5: Observability**               | `docs/trace_eval.md` + `docs/hybrid_flowchart.mermaid` | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `Trương Công Thái Đức` (kiêm) |
+| **Role 5: Observability**              P | `docs/trace_eval.md` + `docs/hybrid_flowchart.mermaid` | Lập bảng Scoring Matrix & Soi nhật ký Trace Log                                                        | `Trương Công Thái Đức` (kiêm) |
 
 *Note: Nếu nhóm 6 người, Role 5 tách thành 5A (Trace Analyst) và 5B (Flowchart Architect).*
 
@@ -24,7 +24,7 @@
 
 Bộ 9 test cases đã push lên Git tại `config/test_cases.json`. Mỗi test case có sẵn 2 field phụ giúp các Role khác làm việc: `expected_tools` (Role 2/4 biết cần tool nào) và `guardrail_check` (Role 3 biết cần chặn gì).
 
-### 🛠️ Role 2 — Phạm Quốc Tuần (`src/tools.py`)
+### 🛠️ Role 2 — Trần Trung Hiếu (`src/tools.py`)
 
 Xoá 2 tool mẫu `get_weather` / `search_flights`, viết 4 tool mới (tên phải khớp đúng field `expected_tools`):
 
@@ -39,7 +39,7 @@ Xoá 2 tool mẫu `get_weather` / `search_flights`, viết 4 tool mới (tên ph
 - ⚠️ **Tool phải fail an toàn**: mọi lỗi đều `return "LỖI: ..."`, KHÔNG được `raise` (yêu cầu của test case #8 — khoa Thú y, ngày 32/13/2026, bác sĩ không tồn tại).
 - Nhớ cập nhật lại dict `AVAILABLE_TOOLS` ở cuối file.
 
-### 🧠 Role 3 — Trần Trung Hiếu (`src/prompts.py`)
+### 🧠 Role 3 — Phạm Quốc Tuần (`src/prompts.py`)
 
 - `CHATBOT_BASELINE_PROMPT`: trợ lý y tế **không có tool** — phải thừa nhận không tra được lịch bác sĩ (để test case #4 lộ rõ hạn chế của Chatbot).
 - `REACT_SYSTEM_PROMPT`: liệt kê đúng 4 tool trên + ép format `Thought → Action → Observation → Final Answer`.
