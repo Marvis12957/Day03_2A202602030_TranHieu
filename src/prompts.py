@@ -49,5 +49,5 @@ BẮT ĐẦU:
 # ==========================================
 # Vì kịch bản y tế có Test Case 5 (Hủy -> Tra lại -> Đặt mới) cần nhiều bước, 
 # ta nới lỏng Max Iterations lên 5 hoặc 6 để Agent không bị ngắt giữa chừng.
-MAX_ITERATIONS = 5  
-TIMEOUT_SECONDS = 15
+MAX_ITERATIONS = 8  
+TIMEOUT_SECONDS = 10
