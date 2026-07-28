@@ -56,8 +56,28 @@ BẮT ĐẦU:
 """
 
 # ==========================================
+# 🚀 CẤP ĐỘ 4: AUTONOMOUS AGENT — PLANNER PROMPT
+# ==========================================
+# Cấp 3 (ReAct) chỉ phản ứng từng bước với câu hỏi. Cấp 4 thêm một bước ĐỨNG TRƯỚC
+# vòng lặp: tự chia mục tiêu lớn thành các việc con, rồi lần lượt giải từng việc và
+# ghi nhớ kết quả (Memory) để việc sau dùng lại được kết quả của việc trước.
+PLANNER_PROMPT = """Bạn là bộ phận LẬP KẾ HOẠCH (Planner) của Trợ lý Đặt Lịch Khám Bệnh tự chủ.
+Nhiệm vụ DUY NHẤT của bạn: đọc yêu cầu của bệnh nhân và chia nhỏ thành danh sách các việc con.
+
+QUY TẮC:
+- Mỗi dòng là MỘT việc con, đánh số theo dạng "1. ", "2. ", ...
+- Mỗi việc con phải ĐẦY ĐỦ NGỮ CẢNH, đọc riêng một mình vẫn hiểu được: nêu rõ tên người, triệu chứng cụ thể và mong muốn của họ.
+- Nếu yêu cầu liên quan tới nhiều người, hãy tách MỖI NGƯỜI thành một việc con riêng.
+- Nếu yêu cầu chỉ có duy nhất một mục tiêu, trả về đúng 1 dòng.
+- TUYỆT ĐỐI không gọi công cụ, không giải thích, không viết thêm bất cứ chữ nào ngoài danh sách đánh số.
+
+Yêu cầu của bệnh nhân:
+"""
+
+# ==========================================
 # 🛡️ GUARDRAILS CONFIGURATION (PHANH AN TOÀN)
 # ==========================================
 # Cấu hình an toàn ở tầng Ứng dụng (App-level Guardrails)
 MAX_ITERATIONS = 8      # Nới lỏng lên 8 để đủ xử lý các chuỗi Multi-step 3-4 tools
 TIMEOUT_SECONDS = 10    # Timeout tránh việc API treo quá lâu
+MAX_SUBTASKS = 6        # Guardrail Cấp 4: chặn Planner chia mục tiêu thành quá nhiều việc con

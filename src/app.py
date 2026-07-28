@@ -21,7 +21,8 @@ if sys.stdout.encoding != 'utf-8':
 
 # Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
 from tools import AVAILABLE_TOOLS
-from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
+from prompts import (CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, PLANNER_PROMPT,
+                     MAX_ITERATIONS, MAX_SUBTASKS)
 from providers import get_llm_provider
 
 load_dotenv()
@@ -127,12 +128,23 @@ def execute_tool(tool_name: str, args: list) -> str:
         return f"LỖI: Tool '{tool_name}' gặp sự cố khi thực thi: {e}"
 
 
-def run_react_agent(user_query: str, provider):
+def run_react_agent(user_query: str, provider, on_event=None):
     """
     Dựng vòng lặp ReAct Agent thật: gọi LLM sinh Thought -> Action, App tự thực thi
     Tool lấy Observation thật rồi đưa lại vào ngữ cảnh cho vòng suy luận kế tiếp.
     Có Guardrails: MAX_ITERATIONS chặn lặp vô hạn, chặn Repeated Action.
+
+    Args:
+        on_event (callable | None): Callback tuỳ chọn, gọi sau mỗi sự kiện trong vòng lặp
+            với 1 dict {"type": "step"|"thought"|"action"|"observation"|"final"|
+            "malformed"|"guardrail", ...}. Để None thì hàm chạy y hệt như cũ (chỉ in ra
+            terminal) — giao diện Streamlit truyền callback vào để vẽ trace trực tiếp
+            mà không phải viết lại logic vòng lặp ở nơi khác.
     """
+    def emit(**payload):
+        if on_event:
+            on_event(payload)
+
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
 
     scratchpad = f"Câu hỏi của bệnh nhân: {user_query}\n"
@@ -142,19 +154,23 @@ def run_react_agent(user_query: str, provider):
     while step < MAX_ITERATIONS:
         step += 1
         print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
+        emit(type="step", step=step, max_steps=MAX_ITERATIONS)
 
         raw_response = provider.generate(scratchpad, system_prompt=REACT_SYSTEM_PROMPT)
         parsed = parse_agent_response(raw_response)
 
         if parsed["thought"]:
             print(f"🧠 Thought: {parsed['thought']}")
+            emit(type="thought", text=parsed["thought"])
 
         if parsed["type"] == "final":
             print(f"🏁 Final Answer: {parsed['final_answer']}")
+            emit(type="final", text=parsed["final_answer"], steps=step)
             return parsed["final_answer"]
 
         if parsed["type"] == "malformed":
             print(f"⚠️ Phản hồi không đúng định dạng ReAct (Thought/Action/Final Answer): {parsed['raw'][:200]}")
+            emit(type="malformed", text=parsed["raw"][:200])
             scratchpad += (
                 "Observation: LỖI ĐỊNH DẠNG - Phản hồi trước không đúng cú pháp. "
                 "Bắt buộc trả lời theo đúng định dạng 'Thought: ...' rồi 'Action: ten_tool[tham_so]' "
@@ -165,6 +181,7 @@ def run_react_agent(user_query: str, provider):
         # parsed["type"] == "action"
         tool_name, args = parsed["tool"], parsed["args"]
         print(f"🛠️ Action: {tool_name}{args}")
+        emit(type="action", tool=tool_name, args=args)
 
         action_signature = (tool_name, tuple(args))
         if action_signature == last_action_signature:
@@ -174,11 +191,15 @@ def run_react_agent(user_query: str, provider):
                 "Bạn vui lòng thử mô tả rõ hơn hoặc liên hệ trực tiếp lễ tân để được hỗ trợ."
             )
             print(f"🏁 Final Answer (Safe Fallback): {fallback}")
+            emit(type="guardrail", kind="repeated_action",
+                 text=f"Agent lặp lại đúng 1 Action liên tiếp ({tool_name}) — ngắt an toàn.")
+            emit(type="final", text=fallback, steps=step, fallback=True)
             return fallback
         last_action_signature = action_signature
 
         obs = execute_tool(tool_name, args)
         print(f"👁️ Observation: {obs}")
+        emit(type="observation", text=obs, is_error=obs.startswith("LỖI"))
 
         scratchpad += (
             f"Thought: {parsed['thought'] or ''}\n"
@@ -192,7 +213,157 @@ def run_react_agent(user_query: str, provider):
         "Bạn vui lòng thử lại với câu hỏi cụ thể hơn hoặc liên hệ trực tiếp phòng khám."
     )
     print(f"🏁 Final Answer (Safe Fallback): {fallback}")
+    emit(type="guardrail", kind="max_iterations",
+         text=f"Đã đạt giới hạn tối đa {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
+    emit(type="final", text=fallback, steps=MAX_ITERATIONS, fallback=True)
     return fallback
+
+
+# ==========================================================================
+# 🚀 CẤP ĐỘ 4: AUTONOMOUS AGENT (Planning + Memory)
+# --------------------------------------------------------------------------
+# Cấp 3 ở trên phản ứng từng bước với đúng câu hỏi được đưa vào. Cấp 4 bọc thêm
+# 2 thứ quanh vòng lặp đó:
+#   1. PLANNING — trước khi chạy, LLM tự chia mục tiêu lớn thành các việc con.
+#   2. MEMORY   — kết quả của việc con trước (mã lịch hẹn, khoa đã xác định)
+#                 được ghi nhớ và bơm vào ngữ cảnh của việc con sau, nên Agent
+#                 không đặt trùng lịch và không hỏi lại thông tin đã biết.
+# Nhờ tách nhỏ, mỗi việc con có riêng ngân sách MAX_ITERATIONS — đây chính là
+# cách Cấp 4 giải được test case #11 (đặt lịch 4 người) mà Cấp 3 bó tay.
+# ==========================================================================
+
+# Bắt mã lịch hẹn + thông tin đi kèm từ Observation của tool book_appointment
+_BOOKING_RE = re.compile(
+    r"Mã lịch hẹn:\s*(?P<code>\w+).*?"
+    r"Bệnh nhân:\s*(?P<patient>[^\n]+).*?"
+    r"Chuyên khoa:\s*(?P<specialty>[^\n]+).*?"
+    r"Thời gian:\s*(?P<slot>[^\n]+)",
+    re.S,
+)
+_SPECIALTY_RE = re.compile(r"Gợi ý chuyên khoa:\s*(?:Khoa\s*)?([^.]+)\.")
+
+
+class AgentMemory:
+    """
+    Bộ nhớ dùng chung giữa các việc con của Autonomous Agent.
+
+    Khác với `scratchpad` (chỉ sống trong 1 vòng lặp ReAct rồi mất), Memory sống
+    xuyên suốt cả phiên: việc con số 3 vẫn đọc được mã lịch hẹn mà việc con số 1
+    vừa đặt. Đây là điểm phân biệt Cấp 4 với Cấp 3.
+    """
+
+    def __init__(self):
+        self.bookings = []   # [{"code","patient","specialty","slot"}]
+        self.facts = []      # các dữ kiện ngắn Agent đã xác lập được
+
+    def observe(self, observation: str):
+        """Tự trích dữ kiện đáng nhớ từ một Observation bất kỳ."""
+        m = _BOOKING_RE.search(observation)
+        if m:
+            booking = {k: v.strip() for k, v in m.groupdict().items()}
+            if booking["code"] not in [b["code"] for b in self.bookings]:
+                self.bookings.append(booking)
+                return f"Đã ghi nhớ lịch hẹn {booking['code']} cho {booking['patient']}"
+
+        m = _SPECIALTY_RE.search(observation)
+        if m:
+            fact = f"Chuyên khoa phù hợp đã xác định: {m.group(1).strip()}"
+            if fact not in self.facts:
+                self.facts.append(fact)
+                return f"Đã ghi nhớ: {fact}"
+        return None
+
+    def as_context(self) -> str:
+        """Kết xuất bộ nhớ thành đoạn văn bản để bơm vào đầu việc con kế tiếp."""
+        if not self.bookings and not self.facts:
+            return ""
+        lines = ["[BỘ NHỚ CỦA PHIÊN LÀM VIỆC — dữ liệu đã xác lập ở các bước trước, "
+                 "hãy dùng lại thay vì tra cứu/hỏi lại từ đầu]"]
+        for b in self.bookings:
+            lines.append(f"- Đã đặt lịch: mã {b['code']} | {b['patient']} | "
+                         f"khoa {b['specialty']} | {b['slot']}")
+        for f in self.facts:
+            lines.append(f"- {f}")
+        return "\n".join(lines) + "\n"
+
+    def summary(self) -> str:
+        if not self.bookings:
+            return "Chưa đặt được lịch hẹn nào."
+        return "; ".join(f"{b['code']} ({b['patient']} — khoa {b['specialty']}, {b['slot']})"
+                         for b in self.bookings)
+
+
+def plan_goal(user_query: str, provider) -> list:
+    """
+    Bước PLANNING: nhờ LLM chia mục tiêu lớn thành danh sách việc con.
+    Trả về list các chuỗi việc con; nếu Planner lỗi thì trả về chính câu hỏi gốc
+    (thoái lui an toàn về hành vi Cấp 3).
+    """
+    raw = provider.generate(user_query, system_prompt=PLANNER_PROMPT)
+    subtasks = []
+    for line in raw.splitlines():
+        line = line.strip()
+        m = re.match(r"^\d+[.)]\s*(.+)$", line)
+        if m and len(m.group(1)) > 10:
+            subtasks.append(m.group(1).strip())
+    if not subtasks:
+        return [user_query]
+    return subtasks[:MAX_SUBTASKS]   # 🛡️ Guardrail: chặn Planner đẻ ra quá nhiều việc con
+
+
+def run_autonomous_agent(user_query: str, provider, on_event=None):
+    """
+    Vòng đời Cấp 4: Plan ➔ (lặp) giải từng việc con bằng ReAct Loop ➔ tổng hợp.
+
+    Args:
+        on_event: cùng giao diện callback với run_react_agent, có thêm 2 loại sự kiện
+            {"type": "plan", "subtasks": [...]} và {"type": "subtask", "index", "total", "text"}
+            cùng {"type": "memory", "text": ...} khi bộ nhớ ghi nhận dữ kiện mới.
+    Returns:
+        dict: {"subtasks", "answers", "memory"}
+    """
+    def emit(**payload):
+        if on_event:
+            on_event(payload)
+
+    print(f"\n🚀 [AUTONOMOUS AGENT] Mục tiêu: {user_query}")
+
+    print("\n📋 --- GIAI ĐOẠN 1: PLANNING ---")
+    subtasks = plan_goal(user_query, provider)
+    for i, s in enumerate(subtasks, 1):
+        print(f"   {i}. {s}")
+    emit(type="plan", subtasks=subtasks)
+
+    memory = AgentMemory()
+    answers = []
+
+    print("\n⚙️ --- GIAI ĐOẠN 2: THỰC THI TỪNG VIỆC CON (mỗi việc có ngân sách ReAct riêng) ---")
+    for i, task in enumerate(subtasks, 1):
+        print(f"\n╔══ Việc con {i}/{len(subtasks)}: {task}")
+        emit(type="subtask", index=i, total=len(subtasks), text=task)
+
+        # 💾 Bơm bộ nhớ vào đầu việc con — đây là chỗ Cấp 4 khác Cấp 3
+        context = memory.as_context()
+        scoped_query = f"{context}\nYêu cầu cần xử lý: {task}" if context else task
+
+        def relay(ev):
+            """Chuyển tiếp sự kiện của ReAct loop ra ngoài, đồng thời nhặt dữ kiện vào Memory."""
+            if ev["type"] == "observation":
+                noted = memory.observe(ev["text"])
+                if noted:
+                    print(f"💾 Memory: {noted}")
+                    emit(type="memory", text=noted)
+            emit(**ev)
+
+        answer = run_react_agent(scoped_query, provider, on_event=relay)
+        answers.append({"task": task, "answer": answer})
+
+    print("\n🎯 --- GIAI ĐOẠN 3: TỔNG HỢP & TỰ ĐÁNH GIÁ ---")
+    print(f"   Đã xử lý {len(subtasks)}/{len(subtasks)} việc con.")
+    print(f"   💾 Bộ nhớ cuối phiên: {memory.summary()}")
+    emit(type="done", subtasks=subtasks, answers=answers, memory_summary=memory.summary())
+
+    return {"subtasks": subtasks, "answers": answers, "memory": memory}
 
 
 if __name__ == "__main__":
